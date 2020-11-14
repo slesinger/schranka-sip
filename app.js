@@ -1,8 +1,9 @@
 require('dotenv').config()
-const client = require('ari-client')
+const ariClient = require('ari-client')
 const dgram = require('dgram')
 const server = dgram.createSocket('udp4')
 const mqtt = require('mqtt')
+const provider = require('./google-speech-provider')
 
 const ariApp = 'schranka'
 
@@ -12,10 +13,15 @@ class AriController {
   constructor(options) {
     this.options = Object.assign({}, options)
     this.connect()
+
+    process.on('SIGINT', async () => {
+      await this.close();
+      process.exit(0);
+    });
   }
 
   async connect() {
-    this.ari = await client.connect(process.env.AST_HOST, process.env.AST_USER, process.env.AST_PASS)
+    this.ari = await ariClient.connect(process.env.AST_HOST, process.env.AST_USER, process.env.AST_PASS)
     this.ari.once('StasisStart', channelJoined)
 
     function channelJoined(event, incoming) {
@@ -32,6 +38,10 @@ class AriController {
     }
     this.closing = true
 
+    this.client.close()  // Stop UDP client that forwards audio to dynamic extMedia port
+    delete this.client
+    this.speechProvider.stopStream()
+
     for (var i = 0; i < this.channels.length; i++) {
       if (this.channels[i]) {
         console.log("Hanging up channel", this.channels[i].id)
@@ -44,26 +54,18 @@ class AriController {
     }
     this.channels = []
 
-    if (this.microphoneChannel) {
-      console.log("Hanging up microphone media channel")
+    if (this.extChannel) {
+      console.log("Hanging up external media channel")
       try {
-        await this.microphoneChannel.hangup()
+        await this.extChannel.hangup()
       } catch (error) {
+        console.log("Ext media ch hangup", error)
       }
-      delete this.microphoneChannel
-    }
-
-    if (this.speakerChannel) {
-      console.log("Hanging up speaker media channel")
-      try {
-        await this.speakerChannel.hangup()
-      } catch (error) {
-      }
-      delete this.speakerChannel
+      delete this.extChannel
     }
 
     if (this.bridge) {
-      console.log("Destroying bridge")
+      console.log("Destroying bridge", this.bridge.id)
       try {
         await this.bridge.destroy()
       } catch (error) {
@@ -88,7 +90,7 @@ class AriController {
     this.options.dialstring.forEach(element => {
       this.originate(element)
     })
-    // Now we create the External Media channel for microphone
+    // Now we create the External Media channel for microphone and speaker
     this.extChannel = this.ari.Channel()
     this.extChannel.on('StasisStart', (event, chan) => {
       chan.getChannelVar({
@@ -96,11 +98,18 @@ class AriController {
         variable: "UNICASTRTP_LOCAL_PORT"
       }).then((port) => {
         this.extMediaMicPort = parseInt(port.value)
-        var client = dgram.createSocket('udp4');
+        this.client = dgram.createSocket('udp4')
+
         server.on('message', (msg, rinfo) => {
-          client.send(msg, 0, msg.length, this.extMediaMicPort, process.env.THIS_HOST)
+          if (this.client !== undefined) {
+            this.client.send(msg, 0, msg.length, this.extMediaMicPort, process.env.THIS_HOST)
+            if (this.speechProvider !== undefined) {
+              // Strip the 12 byte RTP header
+              this.speechProvider.audioInputStreamTransform.write(msg.slice(12))
+            }
+          }
         })
-        
+
       })
       this.bridge.addChannel({ channel: chan.id })
     })
@@ -121,7 +130,9 @@ class AriController {
       this.close()
     }
 
-    this.bot()
+    delete this.closing
+
+    this.botStart()
   }
 
   async originate(dialString) {
@@ -130,6 +141,7 @@ class AriController {
     ch.on('StasisStart', (event, chan) => {
       console.log("Adding", dialString, "to bridge")
       this.bridge.addChannel({ channel: chan.id })
+      this.botCancel()
     })
     ch.on('StasisEnd', (event, chan) => {
       this.close()
@@ -146,20 +158,91 @@ class AriController {
     }
   }
 
-  async bot() {
 
-    this.ari.bridges.play({
-      bridgeId: this.bridge.id,
-      media: 'sound:zvonek-odezva'
-    })
-      .then(function (playback) { })
-      .catch(function (err) { console.log(err) })
+  transcriptCallback(text, isFinal) {
+    if (isFinal) {
+      //console.log(text)
+    }
+  }
+
+  resultsCallback(results) {
+    if (results[0].isFinal) {
+      const transcription = results
+        .map(result => result.alternatives[0].transcript)
+        .join('\n')
+      console.log(`Transcription: ${transcription}`)
+      const wordsInfo = results[0].alternatives[0].words
+      wordsInfo.forEach(a =>
+        console.log(` word: ${a.word}, speakerTag: ${a.speakerTag}`)
+      )
+    }
+  }
+
+  async speechProviderStart() {
+    console.log("Starting speech provider")
+    let config = {
+      encoding: "MULAW",
+      sampleRateHertz: 8000,
+      languageCode: process.env.STT_LANG,
+      audioChannelCount: 1,
+      model: "default",
+      profanityFilter: false,
+      enableAutomaticPunctuation: true,
+      enableWordTimeOffsets: true,
+      metadata: {
+        interactionType: 'DISCUSSION',
+        microphoneDistance: 'MIDFIELD',
+        originalMediaType: 'AUDIO',
+        recordingDeviceName: 'ConferenceCall',
+      }
+    }
+
+    // Start the speech provider passing in the audio server socket.
+    this.speechProvider = new provider.GoogleSpeechProvider(config,
+      (text, isFinal) => {
+        this.transcriptCallback(text, isFinal)
+      },
+      (results) => {
+        //this.resultsCallback(results)
+      },
+    )
+  }
+
+  async botStart() {
+
+    this.ari.bridges.play({ bridgeId: this.bridge.id, media: 'sound:zvonek-odezva' })
+      .then(playback => {
+        this.playbackId = playback.id
+      })
+      .catch(err => console.log(err))
+    this.speechProviderStart()
 
     //TODO docasne, at to closne bot
     setTimeout(() => {
       this.close()
-    }, 60000)
+    }, 180000)
 
+  }
+
+  async botCancel() {
+    this.botStopPlayback()
+  }
+
+  async botStopPlayback() {
+    // Stop any ongoig playbacks
+    if (this.playbackId !== null) {
+      this.ari.playbacks.stop({
+        playbackId: this.playbackId
+      })
+        .then(() => {
+          // console.log("stop OK")
+        })
+        .catch(err => {
+          console.log("stop Err", err)
+
+        })
+      this.playbackId = null
+    }
   }
 }
 
@@ -183,7 +266,7 @@ server.on('listening', () => {
 })
 server.bind(parseInt(process.env.MIC_STATIC_UDP_PORT))
 
-var mqClient  = mqtt.connect(process.env.MQTT_HOST, {username: process.env.MQTT_USER, password: process.env.MQTT_PASS})
+var mqClient = mqtt.connect(process.env.MQTT_HOST, { username: process.env.MQTT_USER, password: process.env.MQTT_PASS })
 mqClient.on('connect', function () {
   mqClient.subscribe(process.env.MQTT_TOPIC, function (err) {
     if (!err) {
@@ -194,11 +277,11 @@ mqClient.on('connect', function () {
     }
   })
 })
- 
+
 mqClient.on('message', function (topic, message) {
   // message is Buffer
   var msg = message.toString()
-  console.log('schranka/zvonek', msg, ariController.bridge)
+  console.log('schranka/zvonek', msg)
   if (msg === 'on' && ariController.bridge === undefined) {
     ariController.zazvon()
   }
