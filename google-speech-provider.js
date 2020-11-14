@@ -144,14 +144,8 @@ class GoogleSpeechProvider {
 
 		if (stream.results[0].isFinal) {
 			this.isFinalEndTime = this.resultEndTime;
-			console.log(stdoutText);
 			this.lastTranscriptWasFinal = true;
 		} else {
-			// Make sure transcript does not exceed console character length
-			if (stdoutText.length > process.stdout.columns) {
-				stdoutText = stdoutText.substring(0, process.stdout.columns - 4) + '...';
-			}
-			console.log(stdoutText);
 			this.lastTranscriptWasFinal = false;
 		}
 		return stream.results;

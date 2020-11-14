@@ -161,21 +161,11 @@ class AriController {
 
   transcriptCallback(text, isFinal) {
     if (isFinal) {
-      //console.log(text)
+      console.log("Final", text)
     }
   }
 
   resultsCallback(results) {
-    if (results[0].isFinal) {
-      const transcription = results
-        .map(result => result.alternatives[0].transcript)
-        .join('\n')
-      console.log(`Transcription: ${transcription}`)
-      const wordsInfo = results[0].alternatives[0].words
-      wordsInfo.forEach(a =>
-        console.log(` word: ${a.word}, speakerTag: ${a.speakerTag}`)
-      )
-    }
   }
 
   async speechProviderStart() {
@@ -203,7 +193,7 @@ class AriController {
         this.transcriptCallback(text, isFinal)
       },
       (results) => {
-        //this.resultsCallback(results)
+        this.resultsCallback(results)
       },
     )
   }
