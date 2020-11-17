@@ -9,6 +9,11 @@ docker run -d --name schranka-sip -p 5001:5001/udp --restart unless-stopped schr
 # Install notes
 /etc/asterisk/rtp.conf > strictrtp=no
 
+# Convert audio to GSM
+```
+sox foo.wav -r 8000 -c1 foo.gsm
+```
+
 # TODO
 [ ] Test ffplay volume amplification. Does not work yet
 

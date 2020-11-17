@@ -15,6 +15,7 @@ class AriController {
     this.connect()
 
     process.on('SIGINT', async () => {
+      console.log("SIGNIT, Exiting...")
       await this.close();
       process.exit(0);
     });
@@ -84,6 +85,7 @@ class AriController {
       this.close()
     }
     this.bridge.on('BridgeDestroyed', (event) => {
+      console.log("Bridge destroyed. Closing.")
       this.close()
     })
 
@@ -114,6 +116,7 @@ class AriController {
       this.bridge.addChannel({ channel: chan.id })
     })
     this.extChannel.on('StasisEnd', (event, chan) => {
+      console.log("StasisEnd on addChannel. Closing")
       this.close()
     })
 
@@ -126,7 +129,7 @@ class AriController {
         direction: "both"
       })
     } catch (error) {
-      console.log(error)
+      console.log("Create extMedia error", error)
       this.close()
     }
 
@@ -144,6 +147,7 @@ class AriController {
       this.botCancel()
     })
     ch.on('StasisEnd', (event, chan) => {
+      console.log("StasisEnd in originate. Closing")
       this.close()
     })
     try {
@@ -154,6 +158,7 @@ class AriController {
         callerId: process.env.CALLER_ID
       })
     } catch (error) {
+      console.log("Originate error", error)
       this.close()
     }
   }
@@ -200,22 +205,34 @@ class AriController {
 
   async botStart() {
 
-    this.ari.bridges.play({ bridgeId: this.bridge.id, media: 'sound:zvonek-odezva' })
-      .then(playback => {
-        this.playbackId = playback.id
-      })
-      .catch(err => console.log(err))
+    this.botStartPlayback('sound:zvonek-odezva')
     this.speechProviderStart()
 
+    var welcomeTimeout = setTimeout(() => {
+      console.log("Play welcome")
+      this.botStopPlayback()
+      this.botStartPlayback('sound:welcome' + 1)
+    }, 10000)
+
     //TODO docasne, at to closne bot
-    setTimeout(() => {
+    var hangupTimeout = setTimeout(() => {
+      console.log("Timeout on bot. Closing.")
       this.close()
     }, 180000)
+    console.log(hangupTimeout)
 
   }
 
   async botCancel() {
     this.botStopPlayback()
+  }
+
+  async botStartPlayback(sound) {
+    this.ari.bridges.play({ bridgeId: this.bridge.id, media: sound })
+      .then(playback => {
+        this.playbackId = playback.id
+      })
+      .catch(err => console.log(err))
   }
 
   async botStopPlayback() {
@@ -228,8 +245,7 @@ class AriController {
           // console.log("stop OK")
         })
         .catch(err => {
-          console.log("stop Err", err)
-
+          //console.log("stop Err", err)  // do not log Playback not found
         })
       this.playbackId = null
     }
