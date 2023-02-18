@@ -13,6 +13,7 @@ docker run -d --name schranka-sip -p 5001:5001/udp --restart unless-stopped schr
 ```
 sox foo.wav -r 8000 -c1 foo.gsm
 ```
+Put it in ```/usr/share/asterisk/sounds```
 
 # TODO
 [ ] Test ffplay volume amplification. Does not work yet

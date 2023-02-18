@@ -274,7 +274,7 @@ server.bind(parseInt(process.env.MIC_STATIC_UDP_PORT))
 
 var mqClient = mqtt.connect(process.env.MQTT_HOST, { username: process.env.MQTT_USER, password: process.env.MQTT_PASS })
 mqClient.on('connect', function () {
-  mqClient.subscribe(process.env.MQTT_TOPIC, function (err) {
+  mqClient.subscribe(process.env.MQTT_TOPIC, {qos: 1}, function (err) {
     if (!err) {
       console.log("Subscribed to", process.env.MQTT_TOPIC, "MQTT topic")
     }
